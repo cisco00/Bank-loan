@@ -1,0 +1,476 @@
+---
+title: "Loan Project"
+author: "Francis"
+date: "8/30/2020"
+output:
+  pdf_document: default
+  html_document: default
+---
+```{r}
+library(lime)
+library(arules)
+library(xgboost)
+library(ROSE)
+library(pROC)
+library(randomForest)
+library(vip)
+library(gridExtra)
+library(corrr)
+library(GGally)
+library(fastDummies)
+library("factoextra")
+library(rpart)
+library(cvAUC)
+library(dummies)
+library(h2o)
+library(colorspace)
+library(caret)
+library("e1071")
+library(datasets)
+library(ggcorrplot)
+library("ggpubr")
+library(ggplot2)
+library(recipes)
+library(caret)
+library(dplyr)
+library(outliers)
+library(hrbrthemes)
+library(cluster)
+library(tidyverse)
+```
+
+
+```{r}
+loan <- read.csv(file.choose(), header = T)
+str(loan)
+```
+    
+    The data contains 5000 observations and 14 variables. The target variable “Personal.Loan” is seen as an integer, hence we need to convert it to factor and then check for missing values and try as much as possible to clean our data set.
+
+```{r}
+summary(loan)
+```
+      
+      summary statistic of the whole data set and from the summary table we can see that there are 18 missing values in the family members column
+
+```{r}
+sum(is.na(loan))
+mean(is.na(loan))
+
+```
+      
+      Using a simple sum function to check for numbers of missing values in our data set, we observed that there are 18 missing values in our data set. Looking at our data, we’ve got some wranglings to do. First of all, let’s remove the missing values and some redundant variable such as "ID", and "ZIP CODE" that don't have any relevance in our analysis. we will like to know if customer’ Age and years of experience play any significant role in converting customer from depositor to full time bank customer. Finally, we will be performing one-hot coding on categorical variables in other to be able to us it for our classification.
+
+```{r}
+clean_data <- na.omit(loan)
+str(clean_data)
+```
+```{r}
+clean_data$ID <- NULL
+clean_data$ZIP.Code <- NULL
+```
+  
+    Droping irrelevant variables in our data set which are not necessary for result analysis and dealing with missing values in our data set in other to have a clean and well to do data set free from miss information which might affect our result and analysis at the end of the day.
+
+```{r}
+str(clean_data)
+```
+  
+    After removing the irrelevant variables and missing values from our data set we carry out a summary static to cross check.
+```{r}
+cor(clean_data$CCAvg, clean_data$Personal.Loan)
+
+```
+    
+    This show that Credit card average has a positive relationship with personal loan  but it is not significant.That is to say with more deposite customer getting Credit card the better the chance of converting them to personal loan customer.
+
+                                                              BiVariant Analysis
+                                                              
+```{r}
+ggscatter(clean_data, x = "Age..in.years.", y = "Personal.Loan", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "pearson",
+          xlab = "Age..in.years.", ylab = "Personal loan")
+```
+
+    There is negative correllation between Personal loan and Age in years and it is not significant.
+```{r}
+
+ggscatter(clean_data, x = "Mortgage", y = "Personal.Loan", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "pearson",
+          xlab = "Mortgage", ylab = "Personal loan")
+
+```
+
+```{r}
+ggscatter(clean_data, x = "Education", y = "Personal.Loan", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "pearson",
+          xlab = "Education", ylab = "Personal loan")
+```
+
+    The graph above show that there is a relationship between Education and Personl loan that is to say the more educated an individual is the more he/she is able to collect loan and automatically becoming an asset customers to the bank because he/she really understand what the loan is meant to serve and how the loan will profit him better.
+
+```{r}
+ggscatter(clean_data, x = "Income..in.K.month.", y = "Personal.Loan", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "pearson",
+          xlab = "Income..in.K.month.", ylab = "Personal loan")
+```
+
+
+```{r}
+corr <- round(cor(clean_data), 1)
+head(corr[, 1:12])
+
+```
+      
+        Correlation between the various variable in the data set
+```{r}
+p.mat <- cor_pmat(clean_data)
+head(p.mat[, 1:12])
+```
+    
+    Checking for the correlationship between the variables in the data set using correlation matrix
+
+                                                            Univariant Analysis
+
+```{r}
+ggcorrplot(corr)
+```
+    
+    The correllation matrix shows a positive linear correllation between the various variables which goes to say that the independent all have effect on the dependent variable (Personal.Loan) that is with a change in the independent variable it will lead to same chanege in the dependent variable. 
+```{r}
+names(clean_data)
+```
+    
+    Getting the names of the variables in thar data set in other to know the columns that are redundant so that we can remove from our data set
+
+```{r}
+data.cleaning <- clean_data %>% mutate(Age.Customers = Age..in.years., Prof.Exper = Experience..in.years., Education.Level = Education)
+
+data.cleaning1 <- data.cleaning %>% mutate(Mortgage = case_when(Mortgage >= 0 & Mortgage <= 150~"Car Mortgage", Mortgage >= 151 & Mortgage <= 350~"land Mortgage", Mortgage >= 351 & Mortgage <= 650~"House Mortgage"))
+data.cleaning1$Mortgage <- as.factor(data.cleaning1$Mortgage)
+  
+clean_data2 <- data.cleaning1 %>% mutate(Age.Customers = case_when(Age.Customers >= 18  & Age.Customers <= 35 ~ 'Young ', Age.Customers >= 36  & Age.Customers <= 52 ~ 'Middle-Aged', Age.Customers >= 53  & Age.Customers <= 69 ~ 'Elderly'))
+clean_data2$Age.Customers <- as.factor(clean_data2$Age.Customers)
+clean_data2$Age..in.years. <- NULL
+
+clean_data3 <- clean_data2 %>% mutate(Prof.Exper = case_when(Prof.Exper >= -3  & Prof.Exper <= 25 ~ 'Less than 25yrs', Prof.Exper >= 25  & Prof.Exper<= 35 ~ 'Between 16-25yrs',Prof.Exper >= 35  & Prof.Exper <= 46 ~ 'Between 26-36yrs',Prof.Exper >= 46  & Prof.Exper <= 65 ~ 'Between 37-45yrs'))
+clean_data3$Prof.Exper <- as.factor(clean_data3$Prof.Exper)
+clean_data3$Experience..in.years. <- NULL
+
+clean_data4 <- clean_data3 %>% mutate(Education.Level = case_when(Education.Level <= 1~"Undergraduate", Education.Level <= 2~"Graduate", Education.Level <= 3~"Msc, MBA, Ph.d"))
+clean_data4$Education.Level <- as.factor(clean_data4$Education.Level)
+clean_data4$Education <- NULL
+
+clean_data5 <- clean_data4 %>% mutate(Income..in.K.month. = case_when(Income..in.K.month. >=8 & Income..in.K.month. <=75~"Low.Earners", Income..in.K.month. >=76 & Income..in.K.month. <=125~"Average.Earners", Income..in.K.month. >=126 & Income..in.K.month. <= 200 ~ "High.Earners"))
+clean_data5$Income..in.K.month. <- as.factor(clean_data5$Income..in.K.month.)
+
+```
+    
+    Since we have discretized”Age" and “Exp_Age”, we will also be dropping them from our data set and work with the discretized version. Remember that we have also categorized the variable and we intend to work with the transformed variable. So we will be performing the drop as we discretized the variables.
+
+
+```{r}
+model.data <- na.omit(clean_data5, cols = c("Education.Level"))
+summary(model.data)
+str(model.data)
+
+```
+     
+     Summary statistic and structure of the data set in our data frame.
+
+                                      Converting Numeric Variables to factor
+```{r}
+model.data$Personal.Loan <- as.factor(model.data$Personal.Loan)
+model.data$Mortgage <- as.factor(model.data$Mortgage)
+model.data$Securities.Account <- as.factor(model.data$Securities.Account)
+model.data$CD.Account <- as.factor(model.data$CD.Account)
+model.data$Online <- as.factor(model.data$Online)
+model.data$Income..in.K.month. <- as.factor(model.data$Income..in.K.month.)
+model.data$CreditCard <- as.factor(model.data$CreditCard)
+str(model.data)
+```
+                                        Removing Redundant variable that are duplicate in our data set
+```{r}
+model.data$Age..in.years. <- NULL
+summary(model.data)
+```
+```{r}
+clean_data7 <- model.data
+```
+
+
+```{r}
+p6 <- ggplot(clean_data7, aes(x=Prof.Exper)) + ggtitle("Years of Professional  Experience") + xlab("Experience") + geom_bar(aes(y = 100*(..count..)/sum(..count..)), width = 0.5) + ylab("Personal Loan")+ coord_flip()  +theme_minimal()
+  
+  
+  p7 <- ggplot(clean_data7, aes(x=Age.Customers)) + ggtitle("Age Range of Customers") + xlab("Age Group") + geom_bar(aes(y = 100*(..count..)/sum(..count..)), width = 0.5) + ylab("Personal Loan") + coord_flip()+ theme_minimal()
+  
+  
+  p8 <- ggplot(clean_data7, aes(x=Securities.Account)) + ggtitle("Securities.Account User") + xlab("Securities.Account") + geom_bar(aes(y = 100*(..count..)/sum(..count..)), width = 0.5) + ylab("Personal Loan")+ coord_flip() + theme_minimal()
+  
+  
+  p9 <-ggplot(clean_data7, aes(x=CD.Account)) + ggtitle("CD.Account Owners") + xlab("CD.Account") + geom_bar(aes(y = 100*(..count..)/sum(..count..)), width = 0.5) + ylab("Personal Loan") + coord_flip() + theme_minimal()
+  
+  
+  p10 <- ggplot(clean_data7, aes(x=Online)) + ggtitle("Online Users") + xlab("Online") + geom_bar(aes(y = 100*(..count..)/sum(..count..)), width = 0.5) + ylab("Personal Loan")+ coord_flip() + theme_minimal()
+  
+  
+  p11 <- ggplot(clean_data7, aes(x=CreditCard)) + ggtitle("Credit Card Owners") + xlab("Credit Card") + geom_bar(aes(y = 100*(..count..)/sum(..count..)), width = 0.5) + ylab("Personal Loan") + coord_flip() + theme_minimal()
+  
+  
+  p12 <- ggplot(clean_data7,aes(x=Income..in.K.month.)) + ggtitle("Income in k month") + coord_flip() + xlab("Credit Card") + geom_bar(aes(y = 100*(..count..)/sum(..count..)), width = 0.5) + ylab("Personal Loan") + coord_flip() + theme_minimal()
+  
+  
+  p13 <- ggplot(clean_data7, aes(x=Mortgage)) + ggtitle("Mortgage") + xlab("Mortgage") + geom_bar(aes(y = 100*(..count..)/sum(..count..)), width = 0.5) + ylab("Personal Loan") +coord_flip() + theme_minimal()
+  
+  grid.arrange(p6,p7,p8,p9,p10, p11, p12, p13, ncol=3)
+```
+```{r}
+summary(clean_data7)
+```
+
+```{r}
+p14 <- ggplot(clean_data7, aes(x=Education.Level)) + ggtitle("Education Level") + xlab("Education") + geom_bar(aes(y = 100*(..count..)/sum(..count..)), width = 0.5) + ylab("Personal Loan") + theme_minimal()
+
+p15 <- ggplot(model.data, aes(x=Family.members)) + ggtitle("Family members") + xlab("Family members") + geom_bar(aes(y = 100*(..count..)/sum(..count..)), width = 0.5) + ylab("Personal Loan")  + theme_minimal()
+
+p16 <- ggplot(model.data, aes(x=Personal.Loan)) + ggtitle("Personal loan") + xlab("Personal loan") + geom_bar(aes(y = 100*(..count..)/sum(..count..)), width = 0.5) + ylab("Personal Loan") + theme_minimal()
+
+grid.arrange(p14, p15, p16, ncol=3)
+```
+
+                    To start the preprocessing, let’s split our data set into training and testing sets with the train set being 70% and test 30%.
+
+                                                             Exploratory Data Analysis
+
+```{r}
+set.seed(1005)
+split <- sample(seq_len(nrow(clean_data7)), size = floor(0.70 * nrow(clean_data7)))
+
+```
+    
+    The set seed is to maintain the values of the variable so that it wont change whenever you re-run it everytime. 
+```{r}
+train <- clean_data7[split, ]
+test <- clean_data7[-split, ]
+
+```
+
+```{r}
+set.seed(1005)
+dim(train); dim(test)
+```
+      
+      From our train data set we have 3476 numbers of observation and 12 variables and 1490 test observation and 12 variables
+```{r}
+data_recipe<- recipe(Personal.Loan ~ ., data = train) %>%
+  step_log(Family.members) %>%
+  step_dummy(all_nominal(), -all_outcomes()) %>%
+  step_center(all_predictors(), -all_outcomes()) %>%
+  step_scale(all_predictors(), -all_outcomes()) %>%
+  prep(data = train)
+```
+
+
+```{r}
+set.seed(1005)
+train_b <- bake(data_recipe, new_data = train)
+test_b <- bake(data_recipe, new_data = test)
+glimpse(train_b)
+```
+
+
+                                                        Cross Validation of data set
+        For the resampling, we will be using the repeated cross-validation. And as a result we will reapeat the validation once and the number of resampling iterartion we be 4                                                
+```{r}
+cv.ctrl <- trainControl(method = "repeatedcv", repeats = 1,number = 4)
+```
+          
+                                                                  Clustering
+                                                          Using Hierachical Clustering 
+                  hierarchical cluster analysis, is an algorithm that groups similar objects into groups called clusters. The endpoint is a set of clusters, where each cluster is distinct from each other cluster, and the objects within each cluster are broadly similar to each other.                                        
+
+```{r}
+
+par(mfrow = c(1, 3))
+data.dist = dist(clean_data7, method = "euclidean")
+```
+```{r}
+plot(hclust (data.dist), main=" Complete Linkage ", xlab ="", sub ="", ylab ="");
+```
+```{r}
+plot(hclust (data.dist, method='average'), main=" Average Linkage ", xlab ="", sub ="", ylab ="");
+```
+
+```{r}
+plot(hclust (data.dist , method='single'), main=" Single Linkage ", xlab="", sub ="", ylab ="")
+```
+                    The estimate of the optimal clusters K is the value that maximizes the Gap Statistics
+
+```{r}
+set.seed(1000)
+logis<- train(form=Personal.Loan~., data=train_b,method="glm", family="binomial",trControl=cv.ctrl)
+logis
+```
+                    The Method = “glm” indicates a generalized linear model and family=“binomial” specify the additive logistic regression. Total numbers of sample 3476 with 16 predictors and 2 classes                           which are Zeros(Positive) and 1(Negative) and it accurancy stood at 96%.
+
+                        Assessing the Accuracy of our Logistic regression model using the test data set.
+```{r}
+set.seed(1005)
+predlog.glm <- predict(logis,test_b,type="raw")
+confusionMatrix(predlog.glm, test_b$Personal.Loan)
+```
+                      
+                From our logistic regression model we have gotten an accurancy of 96% which is a good result with high significant level of 0.00000004376, the True Positive(Sensitivity) is at 99% ~100% which show how good the model is in predicting the numbers of customers that will be converted from depositor to real customers.The number of True negative(Specificity) which predict the numbers of customers that will be wrongly classify as positive is at 59%,  
+
+                                              Applying The Classification and Regression Technique
+                                                          Decision Tree
+
+            From our data set we can see that 3487 data is being assigned to the train data set which account for 70% of the total observation while 1495 is being assigned to the test data set which account for 30% of the observations in the data frame
+
+```{r}
+set.seed(1005)
+fit <- rpart(Personal.Loan~., data = train_b, method = 'class')
+rpart.plot(fit, extra = 106)
+```
+              
+              From the top of the classification tree it shows the probability of customers who can be converted to personal loan customer of the bank which stands at 100% out of which 9% of people who earn                income monthly can be converted to personal loan customer and probability of atleast 3% being converted monthly. And so also applies to other variables within the data frame
+
+                                                      Random Forest
+                                                              
+```{r}
+train.model <- trainControl(method = "cv", number = 10, search="grid")
+```
+
+                                                                                    Random Forest
+                      The accurancy score is 98% with a total train sample of 3476, 11 predictors, and 2 level of classes which is 0 and 1. That is to say with 
+```{r}
+set.seed(1005)
+rf_default <- train(Personal.Loan~.,
+    data = train,
+    method = "rf",
+    metric = "Accuracy",
+    trControl = train.model)
+
+print(rf_default)
+```
+                                                                              
+```{r}
+set.seed(1005)
+prediction.rf <-predict(rf_default, test, type="raw")
+confusionMatrix(prediction, test$Personal.Loan)
+```
+                                                                
+                                                                Confusion Matrix Algorithm
+      Confusion matrix helps us describe the performance of a classification model. In order to build a confusion matrix, all we need to do is to create a table of actual values and predicted values. To really ascertain the numbers of customer who can be converted from deposit customer to personal loan customer and customers who cannot be converted we make use of confusion matrix so that we can be able to expand the profit margin of the bank. 
+                                                            
+                                                            
+                                                            Fitting Xgboost Model
+            The performance of the random forest on the test data set is the same as that of logistic regression. Let’s fit our final model, Xgboost.
+      nthread: Activates parallel computation. nround: The number of trees to grow, we want it to be 100. eta: lies between 0.01 - 0.3, controls learning rate, it indicates the rate at which the model is learning from data. We want to leave it at the default value of 0.3. max_depth: It controls the depth of       the tree, we want it at the default value of 6. Min_child_weight: it blocks the potential feature interactions to prevent overfitting. Let’s leave it at the default value of 1. subsample: It controls         fraction of observations to be randomly sampled for each tree. Let’s leave it at the default value of 1. colsample_bytree: It controls the number of features (variables) supplied to a tree. Let’s use         the default of 1.
+      
+```{r}
+xgb.grid <- expand.grid(nrounds = 100,eta=0.3, gamma=0, max_depth=3, min_child_weight=1, subsample=1, colsample_bytree=1)
+```
+
+```{r}
+xgb_model <-train(Personal.Loan ~ .,data = train, method="xgbTree",trControl=cv.ctrl, tuneGrid=xgb.grid,nthread = 3)
+```
+
+                                                           Measuring the performance of the xgboost of our model
+```{r}
+set.seed(1005)
+Predict.xgb.model <- predict(xgb_model, test, type = "raw")
+confusionMatrix(Predict.xgb.model, test$Personal.Loan)
+```
+
+    The xgboost model shows that the model is performing well with accurancy of 97%, and sensitivity being True Positive of the model to be 99%, and specificity which shows false positive to be 72%, and P-value which shows the significant of the model to be highly significant in that the value of p is 0.000000001768
+
+
+                                    Binary classifier evaluation metrics
+    A binary classifier is simply a classification model where the response has just two outcomes(Yes/No, 1/0, True/False, Male/Female, Good/Bad etc). A binary classifier can be made via logistic regression, regression tree, random forest, discriminant analysis, neural network, support vector machine and such. A good model, rather giving a straight forward decision (good/bad, 1/0), gives a probability being good or bad. One must decide a cutoff to label the predictions as good/bad or 1/0
+                                          
+                                            AUROC Curve
+        Since we are using more than two model to predict the percentage of deposit customer that will be convert to Pesonal loan customer and assuming with just the accurancy score will we be able to get the best model out of the rest will not be too fair, in that case we use the Area Under Curve method to really get the model that is best suitable for carrying out the analysis. In these case we will be comparing the different models we use which are Logistic(General Logistic Model), Random Forest, Decision Tree, and Xgboost 
+
+```{r}
+response1 <- predictor1 <- c()
+response1 <- c(response1, test$Personal.Loan)
+predictor1<- c(predictor1, prediction.rf)
+par(new=T)
+roc1<- plot.roc(response1, predictor1, ylab="True Positive Rate",xlab="False Positive Rate", percent=TRUE, col="red")
+
+response2 <- predictor2 <- c()
+response2 <- c(response2, test$Personal.Loan)
+predictor2 <- c(predictor2, predlog.glm)
+par(new=T)
+roc2<- plot.roc(response2, predictor2, ylab="True Positive Rate",xlab="False Positive Rate", percent=TRUE, col="magenta")
+
+response3 <- predictor3 <- c()
+response3 <- c(response3, test$Personal.Loan)
+predictor3 <- c(predictor3, Predict.xgb.model)
+par(new=T)
+roc3<- plot.roc(response3, predictor3,ylab="True Positive Rate",xlab="False Positive Rate", percent=TRUE, col="blue")
+legend("bottomright", legend = c("XGBoost", "Random Forest", "Decision Tree"), col = c("blue", "red", "green"),lwd = 2)
+```
+    
+    The Xgboost has the highest accuracy as seen from the output above, also from the AUROC curve, the Xgboost model has the largest area under the curve. Going forward, the Xgboost algorithm is recommended. Let’s examine the Xgboost model and the most influential features Globally using VIP.
+                                                                    
+                                                                    
+                                                            Model Explanation using the VIP Package
+      we create an explainer using the VIP() function, which only takes the model we intend to explain which is the Xgboost model and the train data set. We set the bin_continuous = FALSE. Let’s examine factors that were important to being converted to personal loan customers by selecting five cases in our test data set.                                                              
+```{r}
+explainer <- lime::lime(x = train, model = xgb_model, bin_continuous = F)
+
+```
+
+    we create an explainer using the lime() function, which only takes the model we intend to explain which is the Xgboost model and the train data set. We set the bin_continuous = FALSE.
+
+```{r}
+explanation <- lime::explain(
+  test[1:5, ], 
+  explainer    = explainer, 
+  n_features   = 4,
+  feature_select = "highest_weights",
+  labels = "1"
+)
+```
+
+        The explain() function helps in explaining the explainer we set above. We set feature_select = “highest_weights” because we are interested in features with the highest absolute weight. We set n_features = 4 because we want to see the four most important features in the XGBoost model. Finally, we set the labels = “1” because we are interested in cases where deposit customer can be converted to Personal loan customer.
+        
+```{r}
+plot_features(explanation) +
+  labs(title = "Feature Importance for the Xgboost Model",
+       subtitle = " Selected four cases")
+```
+
+    From the graph above the most important features in converting deposit customers to Personal Loan customers are Income..in.k.month, Educational level, Credit card average and Family members. The Lime method only provides for local intepretation which means we are intepreting the result base on case by case basis.
+
+```{r}
+fit.ranger <- ranger::ranger(
+  Personal.Loan ~ ., 
+  data        = train, 
+  importance  = 'impurity',
+  probability = TRUE
+)
+```
+
+                                                Global Interpretation
+                      The most common ways of obtaining global interpretation is through:
+    variable importance measures
+    Variable importance quantifies the global contribution of each input variable to the predictions of a machine learning model. Variable importance measures rarely give insight into the average direction that a variable affects a response function. They simply state the magnitude of a variable’s relationship with the response as compared to other variables used in the model. For example, the ranger random forest model identified Income..in.k.month, CCAvg, and Educational level as the top 3 variables impacting the objective function which is to convert deposit customer to a Personal loan customer.
+
+```{r}
+vip(fit.ranger) + ggtitle("ranger: RF")
+```
+
+    For the six most important features toward being converted to Personal loan customer are income..in.k.month, Credit card average, Education level, Family members, Credit Account, Mortgage, age.customers, CreditCard, Prof.Exper, Online users. The VIP function only provides Global interpretation which means that we are only interpreting the XGBoost model on a general perspective. 
+    in Summary looking at both the local intepretation and global intepretation we can conclude that Thera bank should focus more on individuals who earn income monthly, whose Credit card average is high and people with more educational background because there know what it is to be Personal loan customer there stand a high chances of getting those loan also there have high chances of paying back the interest rate which at the end of the day is the driving force of converting deposite customer to Personal loan customers.
+                                                                  Conclusion
+    In this article, we applied machine learning algorithm to examine factors that can help Thera bank convert it deposit customer based to Personal loan customer on the given data set. We started by cleaning the data set and performing data wrangling and Explotory data analysis,  splitting the dataset into training and test datasets. We implemented three machine learning algorithms namely: Random Forest, Logistic Regression, and XGBoost. The models were implemented using Caret Package in R. The performance of the trained models was evaluated on the test data set and evaluation metrics such as Accuracy and AUROC curve were used. The results of the performance metrics showed that XGBoost performed better than other machine learning models. The VIP function was used to explain the important features of the XGBoost global  features of the Xgboost mode . For future work, we can tune the parameters of the Xgboost model for an improved accuracy rate.
+
+                                              
